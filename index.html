@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nasabah Mobile + Perjanjian PDF</title>
+<style>
+body { font-family: Arial,sans-serif; margin:0; padding:10px; background:#f5f5f5;}
+h2{text-align:center;margin-bottom:10px;}
+button{padding:12px 16px;margin:4px;border:none;border-radius:10px;cursor:pointer;font-size:16px;transition:0.2s;}
+button:hover{opacity:0.85;}
+.btn-add{background:#007bff;color:white;width:100%;}
+.btn-edit{background:#17a2b8;color:white;margin:2px;}
+.btn-delete{background:#dc3545;color:white;margin:2px;}
+.btn-wa{background:#25d366;color:white;margin:2px;}
+.btn-theme{background:#343a40;color:white;width:100%;}
+input{padding:10px;width:100%;margin:10px 0;border-radius:10px;border:1px solid #ccc;font-size:16px;}
+.kartu {background:white;padding:15px;border-radius:15px;margin-bottom:15px;box-shadow:0 2px 8px rgba(0,0,0,0.1); cursor:pointer;}
+.kartu h3{margin:0 0 10px 0;}
+.kartu p{margin:3px 0;font-size:14px;}
+.rekap{background:white;padding:12px;border-radius:12px;margin-bottom:15px;box-shadow:0 2px 6px rgba(0,0,0,0.1);}
+.modal{display:none;position:fixed;z-index:10;left:0;top:0;width:100%;height:100%;overflow:auto;background-color:rgba(0,0,0,0.5);}
+.modal-content{background:#fff;margin:15% auto;padding:20px;border-radius:15px;width:90%;max-width:400px;position:relative; box-shadow:0 4px 12px rgba(0,0,0,0.3);}
+.close{position:absolute;top:10px;right:15px;font-size:28px;font-weight:bold;color:red;cursor:pointer;}
+#toast{position:fixed;bottom:15px;right:15px;display:none;padding:12px 18px;border-radius:10px;color:#fff;min-width:180px;text-align:center;font-size:14px;}
+#toast.show{display:block;animation:fadein 0.5s, fadeout 0.5s 2.5s;}
+@keyframes fadein{from{opacity:0;transform:translateY(20px);}to{opacity:1;transform:translateY(0);}}
+@keyframes fadeout{from{opacity:1;transform:translateY(0);}to{opacity:0;transform:translateY(20px);}}
+body.dark{background:#121212;color:#eee;}
+body.dark .kartu,.dark .modal-content,.dark .rekap{background:#1e1e1e;color:#eee;}
+body.dark input{background:#333;color:#eee;border:1px solid #555;}
+canvas{touch-action: none; border:1px solid #ccc; border-radius:10px; margin-bottom:5px;}
+</style>
+</head>
+<body>
+
+<h2>Data Nasabah Mobile</h2>
+<button class="btn-add" onclick="tambahNasabah()">+ Tambah Nasabah</button>
+<button class="btn-theme" onclick="toggleTheme()">🌓 Tema</button>
+<input type="text" id="searchInput" placeholder="Cari nasabah..." oninput="renderKartu()">
+
+<div class="rekap" id="rekapTotal">
+  <p>Jumlah Nasabah: <span id="totalNasabah">0</span></p>
+  <p>Total Pinjaman: Rp <span id="totalPinjaman">0</span></p>
+  <p>Total Saldo: Rp <span id="totalSaldo">0</span></p>
+  <p>Total Sisa Promise: <span id="totalPromise">0</span></p>
+</div>
+
+<div id="nasabahContainer"></div>
+<div id="toast"></div>
+
+<!-- Modal Angsuran & Sobekan -->
+<div id="modal" class="modal">
+  <div class="modal-content">
+    <span class="close" onclick="closeModal()">&times;</span>
+    <h3 id="nasabahName"></h3>
+    <button class="btn-add" onclick="bayarAngsuran()">💵 Bayar Angsuran</button>
+    <button class="btn-wa" onclick="pilihSobekan()">📄 Pilih Sobekan</button>
+    <h4>Riwayat Angsuran</h4>
+    <div id="angsuranList">-</div>
+    <h4>Riwayat Sobekan</h4>
+    <div id="sobekanList">-</div>
+    <button class="btn-delete" style="margin-top:10px;width:100%;" onclick="closeModal()">❌ Tutup</button>
+  </div>
+</div>
+
+<!-- Modal Tanda Tangan / Surat Perjanjian -->
+<div id="modalSign" class="modal">
+  <div class="modal-content">
+    <span class="close" onclick="closeSignModal()">&times;</span>
+    <h3>Tanda Tangan Perjanjian</h3>
+    <canvas id="canvasSign" width="300" height="200"></canvas>
+    <button onclick="clearCanvas()">🧹 Bersihkan</button>
+    <button onclick="saveSignature()">💾 Simpan</button>
+    <button onclick="generateOfficialAgreementPDF()">📄 Buat Surat Perjanjian PDF</button>
+    <button class="btn-delete" style="margin-top:10px;width:100%;" onclick="closeSignModal()">❌ Tutup</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+let nasabahList=[], currentIndex=null, signIndex=null;
+let canvas=document.getElementById("canvasSign");
+let ctx=canvas.getContext("2d");
+let drawing=false;
+
+// ===== LOCAL STORAGE =====
+window.onload=function(){
+  let data=localStorage.getItem("nasabahList");
+  if(data) nasabahList=JSON.parse(data);
+  renderKartu();
+};
+function simpanLocalStorage(){localStorage.setItem("nasabahList",JSON.stringify(nasabahList));}
+
+// ===== TOAST =====
+function showToast(msg,color="green"){
+  let toast=document.getElementById("toast");
+  toast.style.backgroundColor=color==="green"?"#28a745":color==="yellow"?"#f0ad4e":"#d9534f";
+  toast.innerText=msg;
+  toast.classList.add("show");
+  setTimeout(()=>{toast.classList.remove("show");},3000);
+}
+
+// ===== CRUD NASABAH =====
+function tambahNasabah(){
+  let nama=prompt("Masukkan Nama Nasabah:");
+  let pinjamanInput=prompt("Masukkan Pinjaman:");
+  let promise=parseInt(prompt("Masukkan Jumlah Hari (1-30):"));
+  let hp=prompt("Masukkan Nomor HP:");
+  if(!nama||!pinjamanInput||isNaN(promise)||!hp) return;
+  let pinjaman=parseFloat(pinjamanInput.replace(/\./g,"")); if(isNaN(pinjaman)) return;
+  let saldo=pinjaman*1.2;
+  nasabahList.push({nama,pinjaman,saldo,promise,hp,riwayatAngsuran:[],riwayatSobekan:[],signature:null});
+  simpanLocalStorage();
+  renderKartu();
+}
+function editNasabah(i){
+  let n=nasabahList[i];
+  let nama=prompt("Ubah Nama:",n.nama); if(!nama) return;
+  let pinjaman=parseFloat(prompt("Ubah Pinjaman:",n.pinjaman.toLocaleString("id-ID")).replace(/\./g,"")); if(isNaN(pinjaman)) return;
+  let promise=parseInt(prompt("Ubah Jumlah Hari (1-30):",n.promise)); if(isNaN(promise)) return;
+  let hp=prompt("Ubah HP:",n.hp); if(!hp) return;
+  n.nama=nama; n.pinjaman=pinjaman; n.saldo=pinjaman*1.2; n.promise=promise; n.hp=hp;
+  simpanLocalStorage(); renderKartu();
+}
+function hapusNasabah(i){
+  if(confirm("Hapus nasabah?")){
+    nasabahList.splice(i,1); simpanLocalStorage(); renderKartu();
+  }
+}
+
+// ===== RENDER KARTU & REKAP =====
+function renderKartu(){
+  let container=document.getElementById("nasabahContainer");
+  container.innerHTML="";
+  let keyword=document.getElementById("searchInput").value.toLowerCase();
+  nasabahList.forEach((n,i)=>{
+    if(keyword && !n.nama.toLowerCase().includes(keyword)) return;
+    let div=document.createElement("div"); 
+    div.className="kartu";
+    div.innerHTML=`<h3>${n.nama}</h3>
+      <p>Pinjaman: Rp ${n.pinjaman.toLocaleString("id-ID")}</p>
+      <p>Saldo: Rp ${n.saldo.toLocaleString("id-ID")}</p>
+      <p>Sisa Promise: ${n.promise} hari</p>
+      <p>HP: ${n.hp}</p>
+      <button class="btn-edit" onclick="editNasabah(${i});event.stopPropagation();">✏️ Edit</button>
+      <button class="btn-delete" onclick="hapusNasabah(${i});event.stopPropagation();">🗑️ Hapus</button>
+      <button class="btn-wa" onclick="shareWhatsApp(${i});event.stopPropagation();">📲 WhatsApp</button>
+      <button class="btn-edit" onclick="openSignModal(${i});event.stopPropagation();">✍️ Perjanjian Hutang</button>`;
+    div.onclick=function(e){ if(e.target.tagName!=="BUTTON") openModal(i); }
+    container.appendChild(div);
+  });
+  updateRekap();
+}
+function updateRekap(){
+  document.getElementById("totalNasabah").innerText = nasabahList.length;
+  document.getElementById("totalPinjaman").innerText = nasabahList.reduce((s,n)=>s+n.pinjaman,0).toLocaleString("id-ID");
+  document.getElementById("totalSaldo").innerText = nasabahList.reduce((s,n)=>s+n.saldo,0).toLocaleString("id-ID");
+  document.getElementById("totalPromise").innerText = nasabahList.reduce((s,n)=>s+n.promise,0);
+}
+
+// ===== MODAL ANGSURAN & SOBEKAN =====
+function openModal(i){
+  currentIndex=i;
+  let n=nasabahList[i];
+  document.getElementById("nasabahName").innerText=n.nama;
+  document.getElementById("angsuranList").innerHTML=n.riwayatAngsuran.join("<br>")||"-";
+  document.getElementById("sobekanList").innerHTML=n.riwayatSobekan.join("<br>")||"-";
+  document.getElementById("modal").style.display="block";
+}
+function closeModal(){document.getElementById("modal").style.display="none";}
+
+// ===== BAYAR ANGSURAN & SOBEKAN =====
+function bayarAngsuran(){
+  let n=nasabahList[currentIndex];
+  let jumlah=parseFloat(prompt("Masukkan jumlah angsuran:").replace(/\./g,""));
+  if(isNaN(jumlah)) return;
+  if(jumlah>n.saldo) jumlah=n.saldo;
+  n.saldo-=jumlah;
+  n.riwayatAngsuran.push(`Bayar: Rp ${jumlah.toLocaleString('id-ID')}`);
+  simpanLocalStorage(); renderKartu(); openModal(currentIndex);
+  showToast(`Angsuran Rp ${jumlah.toLocaleString('id-ID')} berhasil ✅`);
+}
+function pilihSobekan(){
+  let n=nasabahList[currentIndex];
+  let nomor=parseInt(prompt("Pilih Nomor Sobekan (1-30):"));
+  if(isNaN(nomor)||nomor<1||nomor>30) return;
+  if(n.promise<=0){showToast("Sobekan sudah habis ⚠️","red"); return;}
+  n.promise-=1;
+  n.riwayatSobekan.push(`Sobekan No.${nomor}`);
+  simpanLocalStorage(); renderKartu(); openModal(currentIndex);
+  showToast(`Sobekan No.${nomor} berhasil digunakan ✅`);
+}
+
+// ===== SHARE WHATSAPP =====
+function shareWhatsApp(i){
+  let n=nasabahList[i];
+  let message=`Halo ${n.nama},\nPinjaman: Rp ${n.pinjaman.toLocaleString('id-ID')}\nSisa Saldo: Rp ${n.saldo.toLocaleString('id-ID')}\nSisa Promise: ${n.promise} hari`;
+  window.open("https://wa.me/"+n.hp+"?text="+encodeURIComponent(message),"_blank");
+}
+
+// ===== TANDA TANGAN & SURAT PDF =====
+function openSignModal(i){signIndex=i;document.getElementById("modalSign").style.display="block";}
+function closeSignModal(){document.getElementById("modalSign").style.display="none";}
+canvas.addEventListener("mousedown",()=>drawing=true);
+canvas.addEventListener("mouseup",()=>drawing=false);
+canvas.addEventListener("mouseleave",()=>drawing=false);
+canvas.addEventListener("mousemove",(e)=>{
+  if(!drawing) return;
+  let rect=canvas.getBoundingClientRect();
+  ctx.lineWidth=2; ctx.lineCap="round"; ctx.strokeStyle="black";
+  ctx.lineTo(e.clientX-rect.left,e.clientY-rect.top); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(e.clientX-rect.left,e.clientY-rect.top);
+});
+function clearCanvas(){ctx.clearRect(0,0,canvas.width,canvas.height);}
+function saveSignature(){
+  if(signIndex===null) return;
+  nasabahList[signIndex].signature=canvas.toDataURL("image/png");
+  simpanLocalStorage();
+  showToast("Tanda tangan disimpan ✅");
+}
+
+// ===== SURAT PERJANJIAN PDF =====
+function generateOfficialAgreementPDF(){
+  if(signIndex===null) return;
+  let n = nasabahList[signIndex];
+  const { jsPDF } = window.jspdf;
+  let doc = new jsPDF('p','mm','a4');
+  let today = new Date().toLocaleDateString('id-ID');
+
+  doc.setFontSize(18); doc.setFont("helvetica","bold");
+  doc.text("SURAT PERJANJIAN HUTANG",105,20,null,null,"center");
+  doc.setFontSize(12); doc.setFont("helvetica","normal");
+  doc.text(`Tanggal: ${today}`,20,30);
+  doc.text(`Nama Nasabah: ${n.nama}`,20,50);
+  doc.text(`Pinjaman Awal: Rp ${n.pinjaman.toLocaleString('id-ID')}`,20,60);
+  doc.text(`Jumlah yang harus dibayar lunas: Rp ${n.saldo.toLocaleString('id-ID')}`,20,70);
+  doc.text("Dengan ini menyatakan bersedia membayar lunas pinjaman sesuai ketentuan yang berlaku.",20,85);
+  doc.text("Apabila terjadi keterlambatan, nasabah bersedia menerima konsekuensi sesuai kesepakatan.",20,95);
+  doc.text("Tanda Tangan Nasabah:",20,120);
+  doc.text("Tanda Tangan Petugas:",130,120);
+
+  if(n.signature){
+    let img = new Image();
+    img.src = n.signature;
+    img.onload = () => {
+      doc.addImage(img,"PNG",20,125,60,30);
+      doc.save(`Perjanjian_Resmi_${n.nama}.pdf`);
+    }
+  } else { doc.save(`Perjanjian_Resmi_${n.nama}.pdf`); }
+}
+
+// ===== TOGGLE THEME =====
+function toggleTheme(){document.body.classList.toggle("dark");}
+</script>
+
+</body>
+</html>
